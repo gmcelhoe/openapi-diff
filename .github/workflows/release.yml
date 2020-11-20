@@ -1,0 +1,49 @@
+name: Triggered Release
+on:
+  workflow_dispatch:
+    inputs:
+      releaseVersion:
+        description: 'Default version to use when preparing a release or a branch.'
+        required: true
+      developmentVersion:
+        description: 'Default version to use for new local working copy.'
+        required: true
+env:
+  OSS_USERNAME: ${{ secrets.OSS_USERNAME }}
+  OSS_PASSWORD: ${{ secrets.OSS_PASSWORD }}
+  GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/master'
+    steps:
+      - uses: actions/checkout@v2
+      - name: Set up JDK 11
+        uses: actions/setup-java@v1
+        with:
+          java-version: 11
+          # Value of the distributionManagement/repository/id field of the pom.xml
+          server-id: sonatype-nexus-staging
+          gpg-private-key: ${{ secrets.GPG_PRIVATE_KEY }}
+          server-username: OSS_USERNAME
+          server-password: OSS_PASSWORD
+          gpg-passphrase: GPG_PASSPHRASE
+      - uses: actions/cache@v2.1.3
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-maven-
+      - name: Setup Git
+        run: |
+          git config --global committer.email "noreply@github.com"
+          git config --global committer.name "GitHub Release"
+          git config --global author.email "${GITHUB_ACTOR}@users.noreply.github.com"
+          git config --global author.name "${GITHUB_ACTOR}"
+      - name: Release
+        run: ./mvnw -V -B -ntp -Prelease -DreleaseVersion=${{ github.event.inputs.releaseVersion }} -DdevelopmentVersion=${{ github.event.inputs.developmentVersion }} release:prepare release:perform
+      - name: Rollback on failure
+        if: ${{ failure() }}
+        run: |
+          ./mvnw -B release:rollback -Prelease -Dgpg.passphrase=${{secrets.GPG_PASSPHRASE}}
+          echo "You may need to manually delete the GitHub tag, if it was created."
